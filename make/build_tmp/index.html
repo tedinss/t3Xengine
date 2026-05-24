@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>t3X VM HD Shooter</title>
+<style>
+body{
+  margin:0;
+  background:black;
+  overflow:hidden;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+}
+
+canvas{
+  image-rendering: pixelated;
+}
+
+#ui{
+  position:absolute;
+  top:10px;
+  left:10px;
+}
+
+button{padding:8px;}
+</style>
+</head>
+<body>
+
+<div id="ui">
+<button id="load">Load .t3x</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+
+// ================= RESOLUTION LOCK =================
+const BASE_W = 1920;
+const BASE_H = 1080;
+
+const c = document.getElementById("c");
+const g = c.getContext("2d");
+
+c.width = BASE_W;
+c.height = BASE_H;
+
+g.imageSmoothingEnabled = false;
+
+// ================= SCALE =================
+function updateScale(){
+
+  let scaleX = innerWidth / BASE_W;
+  let scaleY = innerHeight / BASE_H;
+
+  let scale = Math.min(scaleX, scaleY);
+
+  if(scale < 0.1) scale = 0.1;
+
+  c.style.position = "absolute";
+  c.style.left = "50%";
+  c.style.top = "50%";
+  c.style.transformOrigin = "center";
+
+  c.style.transform =
+    "translate(-50%,-50%) scale(" + scale + ")";
+}
+
+window.onresize = updateScale;
+updateScale();
+
+// ================= STATE =================
+let E={},V={},BC=[],K={},CD={},GRAVITY=false;
+
+window.onkeydown=e=>{
+  let k=e.key.toLowerCase();
+  if(k===" ") k="space";
+  K[k]=true;
+};
+
+window.onkeyup=e=>{
+  let k=e.key.toLowerCase();
+  if(k===" ") k="space";
+  K[k]=false;
+};
+
+const key=k=>K[k];
+
+// ================= FILE =================
+let input=document.createElement("input");
+input.type="file";
+input.accept=".t3x";
+input.style.display="none";
+document.body.appendChild(input);
+
+document.getElementById("load").onclick=()=>input.click();
+
+input.onchange=e=>{
+  let r=new FileReader();
+  r.onload=ev=>compile(ev.target.result);
+  r.readAsText(e.target.files[0]);
+};
+
+// ================= COMPILER =================
+function compile(src){
+
+  E={};V={};BC=[];CD={};
+
+  GRAVITY = src.includes("g,");
+
+  let lines=src.split("\n").map(x=>x.trim()).filter(Boolean);
+
+  for(let l of lines){
+    BC.push(l.split(","));
+  }
+
+  build();
+}
+
+// ================= BUILD =================
+function build(){
+  for(let i of BC){
+
+    if(i[0]==="p"||i[0]==="e"){
+      E[i[0]+Math.random()]={
+        id:i[0],
+        x:+i[1],y:+i[2],
+        w:+i[3],h:+i[4],
+        c:i[5],
+        hp:100,
+        vy:0
+      };
+    }
+
+    if(i[0]==="v"){
+      V[i[1]]=+i[2];
+    }
+  }
+}
+
+// ================= PHYSICS =================
+function physics(){
+  if(!GRAVITY) return;
+
+  for(let id in E){
+    let e=E[id];
+
+    if(e.id==="p"){
+
+      e.vy += 0.4;
+      e.y += e.vy;
+
+      for(let id2 in E){
+        let g=E[id2];
+
+        if(g.id==="g"){
+
+          if(e.x < g.x+g.w &&
+             e.x+e.w > g.x &&
+             e.y+e.h > g.y &&
+             e.y < g.y+g.h){
+
+            e.y = g.y - e.h;
+            e.vy = 0;
+          }
+        }
+      }
+    }
+  }
+}
+
+// ================= BULLETS =================
+function bullets(){
+  for(let id in E){
+    if(id.startsWith("b")){
+      let b=E[id];
+
+      b.x+=b.vx;
+      b.y+=b.vy;
+      b.life--;
+
+      if(b.life<=0) delete E[id];
+
+      for(let eId in E){
+        let e=E[eId];
+
+        if(e.id==="e"){
+          if(b.x < e.x+e.w &&
+             b.x+b.w > e.x &&
+             b.y < e.y+e.h &&
+             b.y+b.h > e.y){
+
+            e.hp-=10;
+            delete E[id];
+
+            if(e.hp<=0) delete E[eId];
+          }
+        }
+      }
+    }
+  }
+}
+
+// ================= VM =================
+function run(){
+
+  for(let i of BC){
+
+    // MOVE
+    if(i[0]==="c"){
+      for(let id in E){
+        if(E[id].id===i[1]){
+          let s=+i[3];
+
+          if(key("a"))E[id].x-=s;
+          if(key("d"))E[id].x+=s;
+          if(key("w"))E[id].y-=s;
+          if(key("s"))E[id].y+=s;
+        }
+      }
+    }
+
+    // AI
+    if(i[0]==="a"){
+      let A=null,B=null;
+
+      for(let id in E){
+        if(E[id].id===i[1])A=E[id];
+        if(E[id].id===i[2])B=E[id];
+      }
+
+      if(A&&B){
+        let s=+i[3];
+
+        if(A.x<B.x)A.x+=s;
+        if(A.x>B.x)A.x-=s;
+        if(A.y<B.y)A.y+=s;
+        if(A.y>B.y)A.y-=s;
+      }
+    }
+
+    // SHOOT 4 DIRECTION SYSTEM
+    if(i[0]==="s"){
+      for(let id in E){
+        if(E[id].id===i[1]){
+
+          let dir=i[2];
+
+          let vx=0,vy=0;
+
+          if(dir==="left" && key("arrowleft")) vx=-+i[3];
+          if(dir==="right" && key("arrowright")) vx=+i[3];
+          if(dir==="up" && key("arrowup")) vy=-+i[3];
+          if(dir==="down" && key("arrowdown")) vy=+i[3];
+
+          if(vx!==0 || vy!==0){
+
+            if(!CD[id])CD[id]=0;
+            if(CD[id]>0) continue;
+
+            let b="b"+Math.random();
+
+            E[b]={
+              x:E[id].x,
+              y:E[id].y,
+              w:6,h:6,
+              vx:vx,
+              vy:vy,
+              life:60
+            };
+
+            CD[id]=10;
+          }
+        }
+      }
+    }
+  }
+
+  for(let k in CD) CD[k]--;
+}
+
+// ================= RENDER =================
+function render(){
+  g.clearRect(0,0,c.width,c.height);
+
+  for(let id in E){
+    let e=E[id];
+
+    g.fillStyle=e.c;
+    g.fillRect(e.x,e.y,e.w,e.h);
+
+    if(e.hp!==undefined){
+      g.fillStyle="#fff";
+      g.fillText(e.hp,e.x,e.y-5);
+    }
+  }
+}
+
+// ================= LOOP =================
+function loop(){
+  run();
+  physics();
+  bullets();
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+
+</script>
+
+</body>
+</html>
